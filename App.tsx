@@ -102,10 +102,13 @@ const App: React.FC = () => {
 
   // Handlers
   const handleLogin = async (skipCheck = false) => {
-      if (!inputKey.trim()) return;
+      // Auto-clean input: remove quotes, spaces, newlines
+      const cleanKey = inputKey.replace(/['"\s\n]/g, '').trim();
+      
+      if (!cleanKey) return;
 
-      if (!inputKey.startsWith("AIza")) {
-          setErrorMsg("Key 格式错误，应以 AIza 开头");
+      if (!cleanKey.startsWith("AIza")) {
+          setErrorMsg("Key 格式错误：必须以 'AIza' 开头。请检查是否复制完整。");
           return;
       }
 
@@ -113,7 +116,7 @@ const App: React.FC = () => {
       setErrorMsg('');
 
       if (!skipCheck) {
-          const res = await validateApiKey(inputKey.trim());
+          const res = await validateApiKey(cleanKey);
           if (!res.valid) {
               setIsVerifying(false);
               setErrorMsg(res.error || "验证失败");
@@ -121,8 +124,8 @@ const App: React.FC = () => {
           }
       }
 
-      localStorage.setItem("API_KEY", inputKey.trim());
-      setApiKey(inputKey.trim());
+      localStorage.setItem("API_KEY", cleanKey);
+      setApiKey(cleanKey);
       setHasApiKey(true);
       setIsVerifying(false);
   };
@@ -196,45 +199,59 @@ const App: React.FC = () => {
                     <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-400 ml-1">Google API Key</label>
                         <input 
-                            type="password"
+                            type="text" 
                             value={inputKey}
                             onChange={(e) => { setInputKey(e.target.value); setErrorMsg(''); }}
                             disabled={isVerifying}
-                            placeholder="AIzaSy..."
-                            className={`w-full bg-slate-950 border-2 rounded-xl px-4 py-3 text-white focus:outline-none transition-all font-mono ${errorMsg ? 'border-red-500' : 'border-slate-800 focus:border-indigo-500'}`}
+                            placeholder="粘贴 AIzaSy... 开头的密钥"
+                            className={`w-full bg-slate-950 border-2 rounded-xl px-4 py-3 text-white focus:outline-none transition-all font-mono text-sm ${errorMsg ? 'border-red-500' : 'border-slate-800 focus:border-indigo-500'}`}
                         />
                         {errorMsg ? (
-                             <p className="text-xs text-red-400 px-1 font-bold animate-pulse">❌ {errorMsg}</p>
+                             <div className="text-xs text-red-400 px-1 font-bold mt-1 bg-red-900/20 p-2 rounded">
+                                ❌ {errorMsg}
+                             </div>
                         ) : (
                              <div className="flex justify-between px-1 text-xs text-slate-500">
                                 <span>密钥仅保存在本地</span>
-                                <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-indigo-400 hover:underline">去申请 Key &rarr;</a>
+                                <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-indigo-400 hover:underline">没有 Key? 去申请 &rarr;</a>
                              </div>
                         )}
                     </div>
                 </div>
 
                 <div className="space-y-3">
-                    <button 
-                        onClick={() => handleLogin(false)}
-                        disabled={!inputKey || isVerifying}
-                        className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
-                    >
-                        {isVerifying ? (
-                            <>
-                                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                连接中...
-                            </>
-                        ) : "进入系统"}
-                    </button>
-
-                    {errorMsg && (
+                    {!errorMsg ? (
                         <button 
-                            onClick={() => handleLogin(true)}
-                            className="w-full text-xs text-slate-500 hover:text-slate-300 underline transition-colors"
+                            onClick={() => handleLogin(false)}
+                            disabled={!inputKey || isVerifying}
+                            className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
                         >
-                            我已开启 VPN 全局模式，跳过验证直接进入 &rarr;
+                            {isVerifying ? (
+                                <>
+                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    连接验证中...
+                                </>
+                            ) : "进入系统"}
                         </button>
+                    ) : (
+                         <div className="space-y-2 animate-fadeIn">
+                             <button 
+                                onClick={() => handleLogin(false)}
+                                disabled={isVerifying}
+                                className="w-full py-3 bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium rounded-lg transition-all"
+                             >
+                                重试连接
+                             </button>
+                             <button 
+                                onClick={() => handleLogin(true)}
+                                className="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
+                            >
+                                ⚠️ 忽略报错，强制进入系统
+                            </button>
+                            <p className="text-[10px] text-center text-slate-500">
+                                * 如果您确定 Key 是正确的，只是因为网络/VPN原因连接失败，请点击强制进入。
+                            </p>
+                         </div>
                     )}
                 </div>
 
@@ -243,42 +260,36 @@ const App: React.FC = () => {
                         onClick={() => setShowHelp(!showHelp)}
                         className="w-full text-center text-xs text-slate-500 hover:text-indigo-400 underline transition-colors flex items-center justify-center gap-1"
                     >
-                        {showHelp ? '收起教程' : '不懂怎么弄？点我看教程 (免费获取)'}
+                        {showHelp ? '收起教程' : '❓ 还是进不去？点我看教程'}
                     </button>
 
                     {showHelp && (
                         <div className="mt-4 text-left bg-slate-800/50 p-4 rounded-xl text-sm text-slate-300 space-y-2 border border-slate-700/50 animate-fadeIn">
-                            <h3 className="font-bold text-white text-xs mb-2">📖 免费获取密钥教程</h3>
-                            <ol className="list-decimal list-inside space-y-2 text-xs text-slate-400">
+                            <h3 className="font-bold text-white text-xs mb-2">💡 常见问题解决</h3>
+                            <ul className="list-disc list-inside space-y-2 text-xs text-slate-400">
                                 <li>
-                                    <strong>准备环境：</strong>
+                                    <strong className="text-yellow-500">最常见原因：</strong> 网络问题。
                                     <span className="block pl-4 mt-0.5 text-slate-500">
-                                        必须开启魔法上网 (VPN)，建议选美国节点，并开启<b>“全局模式”</b>。
+                                        Google 在国内无法直接访问。请确保开启了 VPN，并且开启了<span className="text-white">“全局模式”</span>(Global Mode)。
                                     </span>
                                 </li>
                                 <li>
-                                    <strong>登录账号：</strong>
+                                    <strong>Key 复制错了：</strong>
                                     <span className="block pl-4 mt-0.5 text-slate-500">
-                                        准备一个 Google 账号 (Gmail) 并登录。
+                                        请检查复制时有没有多复制空格。系统会自动清除空格，但建议您重新复制一遍。
                                     </span>
                                 </li>
                                 <li>
-                                    <strong>获取密钥：</strong>
-                                    <ul className="pl-4 mt-1 space-y-1 list-disc text-slate-500">
-                                        <li>点击上方的 <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-indigo-400 underline">申请 Key 链接</a>。</li>
-                                        <li>点击页面左上角的 <span className="text-white bg-slate-600 px-1 py-0.5 rounded text-[10px]">Get API key</span> 按钮。</li>
-                                        <li>点击 <span className="text-white bg-slate-600 px-1 py-0.5 rounded text-[10px]">Create API key</span>。</li>
-                                    </ul>
-                                </li>
-                                <li>
-                                    <strong>复制粘贴：</strong>
+                                    <strong>强制进入：</strong>
                                     <span className="block pl-4 mt-0.5 text-slate-500">
-                                        将生成的以 <code className="text-yellow-500 bg-slate-900 px-1 rounded">AIza</code> 开头的长串字符复制到输入框。
+                                        如果您确信 Key 没问题，只是验证超时，请点击红色的“强制进入”按钮。
                                     </span>
                                 </li>
-                            </ol>
-                            <div className="mt-2 text-[10px] text-yellow-600/80 border-t border-slate-700/50 pt-2 font-medium">
-                                ⚠️ 提示：不建议在网上购买 Key，直接用自己的号申请不仅免费，而且最稳定安全。
+                            </ul>
+                            <div className="mt-2 pt-2 border-t border-slate-700/50">
+                                <a href="https://aistudio.google.com/app/apikey" target="_blank" className="block text-center text-xs text-indigo-400 border border-indigo-500/30 rounded py-2 hover:bg-indigo-500/10">
+                                    重新去 Google 申请一个新 Key
+                                </a>
                             </div>
                         </div>
                     )}
