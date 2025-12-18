@@ -6,6 +6,12 @@ const MODEL_NAME = 'gemini-3-flash-preview';
 
 // Helper function to safely get API Key from various environment configurations
 const getApiKey = (): string | undefined => {
+  // 0. Try LocalStorage (User entered manually in UI)
+  if (typeof window !== 'undefined') {
+    const localKey = localStorage.getItem("GEMINI_API_KEY");
+    if (localKey) return localKey;
+  }
+
   // 1. Try Vite standard (import.meta.env) - safely accessed
   try {
     // @ts-ignore
