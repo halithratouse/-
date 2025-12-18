@@ -10,6 +10,20 @@ import StatsPanel from './components/StatsPanel';
 // Note: High concurrency may hit API rate limits; built-in retry logic in geminiService handles this.
 const MAX_CONCURRENCY = 5; 
 
+// Helper to check API Key existence safely
+const checkApiKey = (): boolean => {
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_KEY) return true;
+  } catch (e) {}
+  
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env.REACT_APP_API_KEY) return true;
+    if (process.env.API_KEY) return true;
+  }
+  return false;
+};
+
 const App: React.FC = () => {
   const [photos, setPhotos] = useState<PhotoData[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -18,6 +32,9 @@ const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid'); // New view mode state
   const fileInputRef = useRef<HTMLInputElement>(null);
   
+  // Check for API Key presence using helper
+  const hasApiKey = checkApiKey();
+
   // Calculate statistics
   const stats: BatchStats = {
     total: photos.length,
@@ -118,6 +135,13 @@ const App: React.FC = () => {
         processingRef.current.clear();
         return;
     }
+    
+    // Safety check: Do not process if no API key
+    if (!hasApiKey) {
+        alert("无法开始：缺少 API Key 配置。请检查上方的配置指南。");
+        setIsProcessing(false);
+        return;
+    }
 
     const processQueue = async () => {
         // 1. Check if we need to schedule new items
@@ -178,7 +202,7 @@ const App: React.FC = () => {
     const interval = setInterval(processQueue, 1000); // Check every 1s
     return () => clearInterval(interval);
 
-  }, [photos, isProcessing]);
+  }, [photos, isProcessing, hasApiKey]);
 
 
   return (
@@ -239,19 +263,77 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        {/* Stats & Controls */}
-        <StatsPanel 
-          stats={stats} 
-          isProcessing={isProcessing}
-          groupReport={groupReport}
-          generatingReport={generatingReport}
-          onStart={() => setIsProcessing(true)}
-          onStop={() => setIsProcessing(false)}
-          onExport={handleExport}
-          onClear={handleClearAll}
-          onGenerateReport={handleGenerateReport}
-          queueLength={pendingCount}
-        />
+        {/* SETUP GUIDE - Only shows when API Key is missing */}
+        {!hasApiKey && (
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-8 mb-8 shadow-2xl animate-fade-in relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none"></div>
+                
+                <div className="relative z-10">
+                    <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
+                        <span className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-500 text-sm">!</span>
+                        系统初始化向导
+                    </h2>
+                    
+                    <p className="text-slate-400 mb-8 max-w-2xl">
+                        检测到您正在新环境中运行。为了启用 AI 评级功能，请跟随以下 3 步完成配置。
+                        <br/>完成后系统会自动识别，无需刷新。
+                    </p>
+
+                    <div className="grid md:grid-cols-3 gap-6">
+                        {/* Step 1 */}
+                        <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 hover:border-indigo-500/50 transition-colors">
+                            <div className="text-4xl font-black text-slate-800 mb-4">01</div>
+                            <h3 className="font-bold text-lg text-slate-200 mb-2">创建配置文件</h3>
+                            <p className="text-sm text-slate-400">
+                                在您的项目根目录（即所有文件所在的最外层文件夹），新建一个名为 <code className="text-indigo-400 bg-indigo-500/10 px-1 rounded">.env</code> 的文件。
+                            </p>
+                        </div>
+
+                        {/* Step 2 */}
+                        <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 hover:border-indigo-500/50 transition-colors">
+                            <div className="text-4xl font-black text-slate-800 mb-4">02</div>
+                            <h3 className="font-bold text-lg text-slate-200 mb-2">填入密钥</h3>
+                            <p className="text-sm text-slate-400 mb-3">
+                                打开该文件，复制并粘贴以下代码（将后面替换为您申请的 Google Key）：
+                            </p>
+                            <div className="bg-black p-3 rounded-lg border border-slate-800 group relative">
+                                <code className="text-xs font-mono text-emerald-400 block break-all">
+                                    VITE_API_KEY=AIzaSy...您的密钥
+                                </code>
+                            </div>
+                        </div>
+
+                        {/* Step 3 */}
+                        <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 hover:border-indigo-500/50 transition-colors">
+                            <div className="text-4xl font-black text-slate-800 mb-4">03</div>
+                            <h3 className="font-bold text-lg text-slate-200 mb-2">重启终端</h3>
+                            <p className="text-sm text-slate-400">
+                                如果终端（黑框框）正在运行，请按 <code className="text-slate-300">Ctrl+C</code> 停止它。
+                                <br/><br/>
+                                然后重新输入：<br/>
+                                <code className="text-indigo-400">npm run dev</code>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* Stats & Controls - Greyed out if no key */}
+        <div className={!hasApiKey ? 'opacity-30 pointer-events-none filter grayscale transition-all duration-500' : 'transition-all duration-500'}>
+            <StatsPanel 
+            stats={stats} 
+            isProcessing={isProcessing}
+            groupReport={groupReport}
+            generatingReport={generatingReport}
+            onStart={() => setIsProcessing(true)}
+            onStop={() => setIsProcessing(false)}
+            onExport={handleExport}
+            onClear={handleClearAll}
+            onGenerateReport={handleGenerateReport}
+            queueLength={pendingCount}
+            />
+        </div>
 
         {/* View Toggles & Content Area */}
         {photos.length > 0 && (

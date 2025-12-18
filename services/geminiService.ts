@@ -4,6 +4,26 @@ import { Rating, BatchStats, GroupReport } from "../types";
 // Using Gemini 3 Flash model for better performance and multimodal capabilities
 const MODEL_NAME = 'gemini-3-flash-preview';
 
+// Helper function to safely get API Key from various environment configurations
+const getApiKey = (): string | undefined => {
+  // 1. Try Vite standard (import.meta.env) - safely accessed
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_KEY) {
+      // @ts-ignore
+      return import.meta.env.VITE_API_KEY;
+    }
+  } catch (e) {}
+
+  // 2. Try Create React App standard
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env.REACT_APP_API_KEY) return process.env.REACT_APP_API_KEY;
+    if (process.env.API_KEY) return process.env.API_KEY;
+  }
+  
+  return undefined;
+};
+
 // Helper for delay
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -73,7 +93,7 @@ const responseSchema: Schema = {
 };
 
 export const ratePhotoWithGemini = async (file: File): Promise<{ rating: Rating; reason: string }> => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = getApiKey();
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -189,7 +209,7 @@ export const ratePhotoWithGemini = async (file: File): Promise<{ rating: Rating;
 };
 
 export const generateGroupReport = async (stats: BatchStats, sReasons: string[], bReasons: string[]): Promise<GroupReport> => {
-    const apiKey = process.env.API_KEY;
+    const apiKey = getApiKey();
     if (!apiKey) throw new Error("API Key not found");
     
     const ai = new GoogleGenAI({ apiKey });
