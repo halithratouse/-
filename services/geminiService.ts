@@ -30,18 +30,25 @@ const getApiKey = (): string | undefined => {
   return undefined;
 };
 
-// Helper function to get Base URL (for custom proxies)
-// Note: This is currently unused as the SDK does not strictly support baseUrl in constructor options
-const getBaseUrl = (): string | undefined => {
-  if (typeof window !== 'undefined') {
-    const url = localStorage.getItem("GEMINI_BASE_URL");
-    if (url && url.trim().length > 0) return url.trim();
-  }
-  return undefined;
-};
-
 // Helper for delay
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// NEW: Validate Connection before letting user in
+export const validateApiKey = async (apiKey: string): Promise<boolean> => {
+    try {
+        const ai = new GoogleGenAI({ apiKey });
+        // Send a very cheap token request to test connectivity
+        await ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: 'ping',
+            config: { maxOutputTokens: 1 }
+        });
+        return true;
+    } catch (e) {
+        console.error("Connection Validation Failed:", e);
+        return false;
+    }
+};
 
 // Helper to resize image before sending to save bandwidth and token limits
 // Returns a base64 string without the prefix
@@ -110,10 +117,8 @@ const responseSchema: Schema = {
 
 export const ratePhotoWithGemini = async (file: File): Promise<{ rating: Rating; reason: string }> => {
   const apiKey = getApiKey();
-  // const baseUrl = getBaseUrl(); // Removed: baseUrl is not a property of GoogleGenAIOptions
   if (!apiKey) throw new Error("API Key not found");
 
-  // Fix: Removed baseUrl from initialization options
   const ai = new GoogleGenAI({ apiKey });
   
   let base64Image: string;
@@ -204,12 +209,13 @@ export const ratePhotoWithGemini = async (file: File): Promise<{ rating: Rating;
         const errStr = error.toString();
         const isQuotaError = errStr.includes("429") || 
                              errStr.includes("RESOURCE_EXHAUSTED") || 
-                             errStr.includes("quota");
+                             errStr.includes("quota") ||
+                             errStr.includes("503"); // Service Unavailable
         
         if (isQuotaError && attempts < maxAttempts - 1) {
             // Exponential backoff
             const delayTime = baseDelay * Math.pow(2, attempts); 
-            console.warn(`Rate limit hit (429). Retrying in ${delayTime}ms...`);
+            console.warn(`Rate limit or Server Busy. Retrying in ${delayTime}ms...`);
             await wait(delayTime);
             attempts++;
             continue;
@@ -218,7 +224,7 @@ export const ratePhotoWithGemini = async (file: File): Promise<{ rating: Rating;
         console.error("Error analyzing photo:", error);
         return {
             rating: Rating.B, // Default to B on error to be safe
-            reason: "AI unavailable (Limit reached)."
+            reason: "AI unavailable (Network/Limit)."
         };
     }
   }
@@ -228,10 +234,8 @@ export const ratePhotoWithGemini = async (file: File): Promise<{ rating: Rating;
 
 export const generateGroupReport = async (stats: BatchStats, sReasons: string[], bReasons: string[]): Promise<GroupReport> => {
     const apiKey = getApiKey();
-    // const baseUrl = getBaseUrl(); // Removed: baseUrl is not a property of GoogleGenAIOptions
     if (!apiKey) throw new Error("API Key not found");
     
-    // Fix: Removed baseUrl from initialization options
     const ai = new GoogleGenAI({ apiKey });
     
     const prompt = `
