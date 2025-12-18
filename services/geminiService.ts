@@ -33,8 +33,8 @@ const getApiKey = (): string | undefined => {
 // Helper for delay
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// NEW: Validate Connection before letting user in
-export const validateApiKey = async (apiKey: string): Promise<boolean> => {
+// NEW: Validate Connection with specific error return
+export const validateApiKey = async (apiKey: string): Promise<{ valid: boolean; error?: string }> => {
     try {
         const ai = new GoogleGenAI({ apiKey });
         // Send a very cheap token request to test connectivity
@@ -43,10 +43,15 @@ export const validateApiKey = async (apiKey: string): Promise<boolean> => {
             contents: 'ping',
             config: { maxOutputTokens: 1 }
         });
-        return true;
-    } catch (e) {
+        return { valid: true };
+    } catch (e: any) {
         console.error("Connection Validation Failed:", e);
-        return false;
+        let msg = "未知错误";
+        if (e.message) msg = e.message;
+        if (e.toString().includes("Failed to fetch")) msg = "网络连接失败 (请检查 VPN 是否开启全局模式)";
+        if (e.toString().includes("400")) msg = "API Key 无效 (400 Bad Request)";
+        if (e.toString().includes("403")) msg = "API Key 权限不足或无效 (403 Forbidden)";
+        return { valid: false, error: msg };
     }
 };
 

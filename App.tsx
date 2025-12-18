@@ -38,6 +38,7 @@ const App: React.FC = () => {
   
   const [manualKey, setManualKey] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef<Set<string>>(new Set());
@@ -110,26 +111,35 @@ const App: React.FC = () => {
 
   const pendingCount = photos.filter(p => p.status === ProcessStatus.Pending).length;
 
-  const handleSaveKey = async () => {
+  const handleSaveKey = async (skipValidation = false) => {
       if (!manualKey.trim()) return;
       if (!manualKey.trim().startsWith("AIza")) {
           alert("Key 格式似乎不正确。通常以 'AIza' 开头。");
           return;
       }
 
+      // Skip option for users who are confident
+      if (skipValidation) {
+          localStorage.setItem("GEMINI_API_KEY", manualKey.trim());
+          setHasApiKey(true);
+          setManualKey('');
+          return;
+      }
+
       setIsVerifying(true);
+      setErrorMsg('');
       
       // TEST CONNECTION
-      const isValid = await validateApiKey(manualKey.trim());
+      const result = await validateApiKey(manualKey.trim());
       
       setIsVerifying(false);
 
-      if (isValid) {
+      if (result.valid) {
           localStorage.setItem("GEMINI_API_KEY", manualKey.trim());
           setHasApiKey(true);
           setManualKey('');
       } else {
-          alert("验证失败！无法连接到 Google AI 服务。\n\n可能原因：\n1. 您的网络无法访问 Google (国内请开启 VPN)\n2. API Key 无效或已过期");
+          setErrorMsg(result.error || "连接失败");
       }
   };
 
@@ -138,6 +148,7 @@ const App: React.FC = () => {
         localStorage.removeItem("GEMINI_API_KEY");
         setHasApiKey(checkApiKey()); 
         setManualKey('');
+        setErrorMsg('');
       }
   };
 
@@ -243,29 +254,47 @@ const App: React.FC = () => {
                         <input 
                             type="password"
                             value={manualKey}
-                            onChange={(e) => setManualKey(e.target.value)}
+                            onChange={(e) => {
+                                setManualKey(e.target.value);
+                                setErrorMsg('');
+                            }}
                             disabled={isVerifying}
                             placeholder="AIzaSy..."
-                            className="w-full bg-slate-950 border-2 border-slate-800 rounded-xl px-4 py-4 text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all font-mono disabled:opacity-50"
+                            className={`w-full bg-slate-950 border-2 rounded-xl px-4 py-4 text-white placeholder:text-slate-600 focus:outline-none focus:ring-4 transition-all font-mono disabled:opacity-50 ${errorMsg ? 'border-red-500 focus:border-red-500 focus:ring-red-500/10' : 'border-slate-800 focus:border-indigo-500 focus:ring-indigo-500/10'}`}
                         />
                     </div>
-                    <p className="text-xs text-slate-500 px-1">
-                        密钥将仅存储在您的本地浏览器中，安全无忧。
-                    </p>
+                    {errorMsg ? (
+                        <p className="text-xs text-red-400 px-1 font-bold animate-pulse">❌ {errorMsg}</p>
+                    ) : (
+                        <p className="text-xs text-slate-500 px-1">
+                            密钥将仅存储在您的本地浏览器中，安全无忧。
+                        </p>
+                    )}
                 </div>
 
-                <button 
-                    onClick={handleSaveKey}
-                    disabled={!manualKey || isVerifying}
-                    className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 text-lg flex items-center justify-center gap-2"
-                >
-                    {isVerifying ? (
-                        <>
-                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                            连接测试中...
-                        </>
-                    ) : "进入系统"}
-                </button>
+                <div className="space-y-3">
+                    <button 
+                        onClick={() => handleSaveKey(false)}
+                        disabled={!manualKey || isVerifying}
+                        className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 text-lg flex items-center justify-center gap-2"
+                    >
+                        {isVerifying ? (
+                            <>
+                                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                连接测试中...
+                            </>
+                        ) : "进入系统"}
+                    </button>
+                    
+                    {errorMsg && (
+                        <button 
+                            onClick={() => handleSaveKey(true)}
+                            className="w-full text-xs text-slate-500 hover:text-slate-300 underline transition-colors"
+                        >
+                            我确定网络没问题，跳过验证直接进入
+                        </button>
+                    )}
+                </div>
             </div>
             
             <p className="mt-8 text-slate-600 text-xs">
