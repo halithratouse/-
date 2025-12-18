@@ -1,62 +1,13 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { Rating, BatchStats, GroupReport } from "../types";
 
-// Using Gemini 3 Flash model for better performance and multimodal capabilities
-const MODEL_NAME = 'gemini-3-flash-preview';
-
-// Helper function to safely get API Key from various environment configurations
-const getApiKey = (): string | undefined => {
-  // 0. Try LocalStorage (User entered manually in UI)
-  if (typeof window !== 'undefined') {
-    const localKey = localStorage.getItem("GEMINI_API_KEY");
-    if (localKey) return localKey;
-  }
-
-  // 1. Try Vite standard (import.meta.env) - safely accessed
-  try {
-    // @ts-ignore
-    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_KEY) {
-      // @ts-ignore
-      return import.meta.env.VITE_API_KEY;
-    }
-  } catch (e) {}
-
-  // 2. Try Create React App standard
-  if (typeof process !== 'undefined' && process.env) {
-    if (process.env.REACT_APP_API_KEY) return process.env.REACT_APP_API_KEY;
-    if (process.env.API_KEY) return process.env.API_KEY;
-  }
-  
-  return undefined;
-};
+// Using Gemini 3 Flash model for best performance/cost ratio for vision tasks
+const GEMINI_MODEL = 'gemini-3-flash-preview';
 
 // Helper for delay
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// NEW: Validate Connection with specific error return
-export const validateApiKey = async (apiKey: string): Promise<{ valid: boolean; error?: string }> => {
-    try {
-        const ai = new GoogleGenAI({ apiKey });
-        // Send a very cheap token request to test connectivity
-        await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: 'ping',
-            config: { maxOutputTokens: 1 }
-        });
-        return { valid: true };
-    } catch (e: any) {
-        console.error("Connection Validation Failed:", e);
-        let msg = "未知错误";
-        if (e.message) msg = e.message;
-        if (e.toString().includes("Failed to fetch")) msg = "网络连接失败 (请检查 VPN 是否开启全局模式)";
-        if (e.toString().includes("400")) msg = "API Key 无效 (400 Bad Request)";
-        if (e.toString().includes("403")) msg = "API Key 权限不足或无效 (403 Forbidden)";
-        return { valid: false, error: msg };
-    }
-};
-
-// Helper to resize image before sending to save bandwidth and token limits
-// Returns a base64 string without the prefix
+// Helper to resize image
 const resizeAndEncodeImage = async (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -66,8 +17,6 @@ const resizeAndEncodeImage = async (file: File): Promise<string> => {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        
-        // Resize to max dimension of 1024 to speed up AI processing without losing critical detail
         const MAX_DIM = 1024;
         if (width > height) {
           if (width > MAX_DIM) {
@@ -80,21 +29,13 @@ const resizeAndEncodeImage = async (file: File): Promise<string> => {
             height = MAX_DIM;
           }
         }
-
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error("Could not get canvas context"));
-          return;
-        }
+        if (!ctx) { reject(new Error("No context")); return; }
         ctx.drawImage(img, 0, 0, width, height);
-        
-        // Export as JPEG with 0.8 quality
         const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-        // Remove "data:image/jpeg;base64,"
-        const base64 = dataUrl.split(',')[1];
-        resolve(base64);
+        resolve(dataUrl.split(',')[1]);
       };
       img.onerror = reject;
       img.src = event.target?.result as string;
@@ -104,210 +45,106 @@ const resizeAndEncodeImage = async (file: File): Promise<string> => {
   });
 };
 
-const responseSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    rating: {
-      type: Type.STRING,
-      enum: ['S', 'A', 'B'],
-      description: "The rating of the photo (S/A/B).",
-    },
-    reason: {
-      type: Type.STRING,
-      description: "Specific critique on emotion/composition (max 15 words).",
-    },
-  },
-  required: ["rating", "reason"],
-};
+// --- VALIDATION ---
 
-export const ratePhotoWithGemini = async (file: File): Promise<{ rating: Rating; reason: string }> => {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("API Key not found");
-
-  const ai = new GoogleGenAI({ apiKey });
-  
-  let base64Image: string;
-  try {
-      base64Image = await resizeAndEncodeImage(file);
-  } catch (e) {
-      console.error("Image processing error", e);
-      return { rating: Rating.B, reason: "Image processing failed" };
-  }
-
-  const prompt = `
-    You are the Senior Art Director for "Elephant Principal" (象园长), a high-end family travel photography service at Chimelong Safari Park.
-    Your job is to curate photos based on **Emotion**, **Storytelling**, and **Aesthetics**.
-
-    **Context:** 
-    Amusement park, Safari, Parade, Parent-Child interaction, Couple romance.
-
-    **Detailed Grading Rubric:**
-
-    ### **S - THE MASTERPIECE (Top 10% - Ad Quality)**
-    *   **Emotion (Crucial):** Peak emotional resonance. A burst of laughter, a look of pure wonder from a child, or a deeply affectionate moment. Unstaged and authentic.
-    *   **Atmosphere:** Cinematic vibe. Good use of backlight, golden hour, or bubbles/smoke from the park environment.
-    *   **Composition:** Clean background or meaningful background (e.g., a giraffe framing the family). Artistic depth of field.
-    *   **Interaction:** The subject is engaging with the environment (pointing at animals) or each other, not just staring at the lens.
-    *   *The "Wow" shot that goes on the poster.*
-
-    ### **A - EXCELLENT (Top 30% - Client Favorite)**
-    *   **Emotion:** Genuine, warm smiles. Everyone looks happy and flattering.
-    *   **Composition:** Balanced and safe. Subject is clear, no awkward limb chops.
-    *   **Technical:** Sharp focus on eyes, correct exposure.
-    *   **Interaction:** Good group dynamic.
-    *   *A beautiful, high-quality memory that the client will love to share.*
-
-    ### **B - STANDARD (Deliverable - Documentation)**
-    *   **Emotion:** Standard "Say Cheese" face, slightly stiff, or neutral expression.
-    *   **Composition:** Average. Background might be slightly messy (passersby visible) but acceptable.
-    *   **Technical:** Passable. Maybe slightly flat lighting.
-    *   **Purpose:** Proof of attendance. "We were here."
-
-    **Downgrade Rules (Force B):**
-    *   Eyes closed (unintentionally).
-    *   Motion blur on faces.
-    *   Awkward facial expressions.
-    *   Messy background that ruins the subject.
-
-    **Output:**
-    Return JSON with 'rating' and a short 'reason' (e.g., "Cinematic lighting, great joy", "Stiff pose, messy background").
-  `;
-
-  let attempts = 0;
-  const maxAttempts = 6;
-  const baseDelay = 2000; // Start with 2 seconds
-
-  while (attempts < maxAttempts) {
+export const validateApiKey = async (apiKey: string): Promise<{ valid: boolean; error?: string }> => {
     try {
-        const response = await ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: {
-            parts: [
-            { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
-            { text: prompt }
-            ]
-        },
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: responseSchema,
-            temperature: 0.3, // Lower temperature for more consistent strictness
-        }
+        const ai = new GoogleGenAI({ apiKey });
+        await ai.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: 'ping',
+            config: { maxOutputTokens: 1 }
         });
-
-        const text = response.text;
-        if (!text) throw new Error("No response from AI");
-
-        const json = JSON.parse(text);
-        
-        // Map string to Enum
-        let ratingEnum = Rating.B;
-        if (json.rating === 'S') ratingEnum = Rating.S;
-        if (json.rating === 'A') ratingEnum = Rating.A;
-        
-        return {
-        rating: ratingEnum,
-        reason: json.reason || "Processed."
-        };
-
-    } catch (error: any) {
-        // Check for 429 or quota errors
-        const errStr = error.toString();
-        const isQuotaError = errStr.includes("429") || 
-                             errStr.includes("RESOURCE_EXHAUSTED") || 
-                             errStr.includes("quota") ||
-                             errStr.includes("503"); // Service Unavailable
-        
-        if (isQuotaError && attempts < maxAttempts - 1) {
-            // Exponential backoff
-            const delayTime = baseDelay * Math.pow(2, attempts); 
-            console.warn(`Rate limit or Server Busy. Retrying in ${delayTime}ms...`);
-            await wait(delayTime);
-            attempts++;
-            continue;
-        }
-
-        console.error("Error analyzing photo:", error);
-        return {
-            rating: Rating.B, // Default to B on error to be safe
-            reason: "AI unavailable (Network/Limit)."
-        };
+        return { valid: true };
+    } catch (e: any) {
+        let msg = e.message || "连接失败";
+        // Friendly error messages for Chinese users
+        if (e.toString().includes("Failed to fetch")) msg = "网络连接失败 (请检查 VPN 是否开启全局模式)";
+        if (e.toString().includes("403")) msg = "API Key 无效或无权访问 (403 Forbidden)";
+        if (e.toString().includes("400")) msg = "API Key 格式错误 (400 Bad Request)";
+        return { valid: false, error: msg };
     }
-  }
-
-  return { rating: Rating.B, reason: "Analysis Timeout" };
 };
 
-export const generateGroupReport = async (stats: BatchStats, sReasons: string[], bReasons: string[]): Promise<GroupReport> => {
-    const apiKey = getApiKey();
-    if (!apiKey) throw new Error("API Key not found");
-    
+// --- CORE RATING LOGIC ---
+
+const PROMPT_TEXT = `
+You are the Senior Art Director for "Elephant Principal" (象园长).
+Grade this photo (S/A/B) based on Emotion, Storytelling, and Aesthetics.
+
+Rubric:
+S (Masterpiece): Peak emotion, cinematic light, perfect moment.
+A (Excellent): Happy, clear, good composition, client favorite.
+B (Standard): Stiff, messy background, average document.
+
+Return strictly JSON: {"rating": "S"|"A"|"B", "reason": "Short critique under 15 words"}
+`;
+
+export const ratePhoto = async (file: File, apiKey: string): Promise<{ rating: Rating; reason: string }> => {
+    const base64Image = await resizeAndEncodeImage(file);
     const ai = new GoogleGenAI({ apiKey });
     
-    const prompt = `
-      You are the "Elephant Principal" (象园长), the manager of a photography team at Chimelong Safari Park.
-      Evaluate the photographer's performance for this specific client set based on the stats below.
-      
-      **Statistics:**
-      - Total Photos: ${stats.total}
-      - S (Masterpiece): ${stats.s_count} (${Math.round(stats.s_count/stats.total*100)}%)
-      - A (Excellent): ${stats.a_count}
-      - B (Standard): ${stats.b_count}
-      
-      **Content Analysis:**
-      - Highlights (from S-tier photos): ${sReasons.slice(0, 10).join('; ')}...
-      - Issues (from B-tier photos): ${bReasons.slice(0, 10).join('; ')}...
-      
-      **Your Task:**
-      Provide a constructive critique in JSON format.
-      1. **overallGrade**: S (Outstanding), A (Solid), or B (Needs Improvement). 
-         - S if S-tier > 15% and B-tier < 40%.
-         - A if S-tier > 5% and mostly A.
-         - B if mostly B.
-      2. **summary**: A 2-sentence summary of the shoot's quality (in Chinese). Focus on emotion and variety.
-      3. **strengths**: 3 bullet points (Chinese) on what they did well (e.g., "Captured great candid laughter", "Good use of park lighting").
-      4. **improvements**: 3 bullet points (Chinese) on how to improve next time (e.g., "Watch out for messy backgrounds", "Try to interact more with kids for natural smiles").
-    `;
-
+    // Retry logic for stability
     let attempts = 0;
-    const maxAttempts = 4;
-
-    while (attempts < maxAttempts) {
+    while (attempts < 3) {
         try {
             const response = await ai.models.generateContent({
-                model: MODEL_NAME,
-                contents: prompt,
+                model: GEMINI_MODEL,
+                contents: {
+                    parts: [
+                        { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
+                        { text: PROMPT_TEXT }
+                    ]
+                },
                 config: {
                     responseMimeType: "application/json",
                     responseSchema: {
                         type: Type.OBJECT,
                         properties: {
-                            overallGrade: { type: Type.STRING, enum: ["S", "A", "B"] },
-                            summary: { type: Type.STRING },
-                            strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
-                            improvements: { type: Type.ARRAY, items: { type: Type.STRING } }
-                        },
-                        required: ["overallGrade", "summary", "strengths", "improvements"]
+                            rating: { type: Type.STRING, enum: ['S', 'A', 'B'] },
+                            reason: { type: Type.STRING }
+                        }
                     }
                 }
             });
-
-            const text = response.text;
-            if (!text) throw new Error("No report generated");
-            
-            return JSON.parse(text) as GroupReport;
-        } catch (error: any) {
-            const errStr = error.toString();
-            const isQuotaError = errStr.includes("429") || errStr.includes("RESOURCE_EXHAUSTED");
-            
-            if (isQuotaError && attempts < maxAttempts - 1) {
-                const delayTime = 3000 * Math.pow(2, attempts);
-                console.warn(`Rate limit generating report. Retrying in ${delayTime}ms...`);
-                await wait(delayTime);
+            const json = JSON.parse(response.text || "{}");
+            return { rating: json.rating as Rating || Rating.B, reason: json.reason || "Processed" };
+        } catch (e: any) {
+            console.error("Gemini Error", e);
+            if (e.toString().includes("429") || e.toString().includes("503")) {
+                await wait(2000 * Math.pow(2, attempts)); // Exponential backoff
                 attempts++;
                 continue;
             }
-            throw error;
+            return { rating: Rating.B, reason: "AI 网络错误" };
         }
     }
-    throw new Error("Failed to generate report after retries");
-}
+    return { rating: Rating.B, reason: "请求超时" };
+};
+
+// --- REPORT GENERATION ---
+
+export const generateGroupReport = async (stats: BatchStats, sReasons: string[], bReasons: string[], apiKey: string): Promise<GroupReport> => {
+    const prompt = `
+      Evaluate photo batch.
+      Stats: Total ${stats.total}, S ${stats.s_count}, A ${stats.a_count}, B ${stats.b_count}.
+      Highlights: ${sReasons.slice(0,5).join('; ')}.
+      Issues: ${bReasons.slice(0,5).join('; ')}.
+      
+      Return JSON:
+      {
+        "overallGrade": "S"|"A"|"B",
+        "summary": "Chinese summary 2 sentences",
+        "strengths": ["Chinese point 1", "Chinese point 2", "Chinese point 3"],
+        "improvements": ["Chinese point 1", "Chinese point 2", "Chinese point 3"]
+      }
+    `;
+
+    const ai = new GoogleGenAI({ apiKey });
+    const res = await ai.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: prompt,
+            config: { responseMimeType: "application/json" }
+    });
+    return JSON.parse(res.text!) as GroupReport;
+};
