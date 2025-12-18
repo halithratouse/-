@@ -6,7 +6,7 @@ import PhotoCard from './components/PhotoCard';
 import StatsPanel from './components/StatsPanel';
 
 // Constants
-const MAX_CONCURRENCY = 4; 
+const MAX_CONCURRENCY = 5; 
 
 const App: React.FC = () => {
   // State
@@ -19,15 +19,12 @@ const App: React.FC = () => {
   // Auth State
   const [hasApiKey, setHasApiKey] = useState(false);
   const [apiKey, setApiKey] = useState('');
-  const [baseUrl, setBaseUrl] = useState(''); // Custom API Base URL
   
   // Login UI State
   const [inputKey, setInputKey] = useState('');
-  const [inputBaseUrl, setInputBaseUrl] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [showHelp, setShowHelp] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef<Set<string>>(new Set());
@@ -35,14 +32,9 @@ const App: React.FC = () => {
   // Restore Session
   useEffect(() => {
     const savedKey = localStorage.getItem("API_KEY");
-    const savedBaseUrl = localStorage.getItem("BASE_URL");
     if (savedKey) {
         setApiKey(savedKey);
         setHasApiKey(true);
-    }
-    if (savedBaseUrl) {
-        setBaseUrl(savedBaseUrl);
-        setInputBaseUrl(savedBaseUrl); // Pre-fill login input
     }
   }, []);
 
@@ -75,7 +67,7 @@ const App: React.FC = () => {
                 if (processingRef.current.has(photo.id)) return;
                 processingRef.current.add(photo.id);
 
-                ratePhoto(photo.file, apiKey, baseUrl).then(result => {
+                ratePhoto(photo.file, apiKey).then(result => {
                     setPhotos(prev => prev.map(p => {
                         if (p.id !== photo.id) return p;
                         if (result.error) {
@@ -83,7 +75,7 @@ const App: React.FC = () => {
                         }
                         return { ...p, rating: result.rating, reason: result.reason, status: ProcessStatus.Completed };
                     }));
-                }).catch((e) => {
+                }).catch(() => {
                    setPhotos(prev => prev.map(p => {
                         if (p.id !== photo.id) return p;
                         return { ...p, status: ProcessStatus.Error, reason: "系统错误" };
@@ -97,7 +89,7 @@ const App: React.FC = () => {
 
     const interval = setInterval(processQueue, 1000);
     return () => clearInterval(interval);
-  }, [photos, isProcessing, apiKey, baseUrl]);
+  }, [photos, isProcessing, apiKey]);
 
 
   // Stats
@@ -115,7 +107,6 @@ const App: React.FC = () => {
   const handleLogin = async (skipCheck = false) => {
       // Auto-clean input: remove quotes, spaces, newlines
       const cleanKey = inputKey.replace(/['"\s\n]/g, '').trim();
-      const cleanBaseUrl = inputBaseUrl.trim();
       
       if (!cleanKey) return;
 
@@ -128,7 +119,7 @@ const App: React.FC = () => {
       setErrorMsg('');
 
       if (!skipCheck) {
-          const res = await validateApiKey(cleanKey, cleanBaseUrl);
+          const res = await validateApiKey(cleanKey);
           if (!res.valid) {
               setIsVerifying(false);
               setErrorMsg(res.error || "验证失败");
@@ -138,15 +129,6 @@ const App: React.FC = () => {
 
       localStorage.setItem("API_KEY", cleanKey);
       setApiKey(cleanKey);
-      
-      if (cleanBaseUrl) {
-          localStorage.setItem("BASE_URL", cleanBaseUrl);
-          setBaseUrl(cleanBaseUrl);
-      } else {
-          localStorage.removeItem("BASE_URL");
-          setBaseUrl('');
-      }
-
       setHasApiKey(true);
       setIsVerifying(false);
   };
@@ -154,7 +136,6 @@ const App: React.FC = () => {
   const handleLogout = () => {
       if(confirm("确定退出?")) {
           localStorage.removeItem("API_KEY");
-          // Do not clear BASE_URL as user might want to keep proxy settings
           setHasApiKey(false);
           setApiKey('');
           setInputKey('');
@@ -192,7 +173,7 @@ const App: React.FC = () => {
       try {
           const sReasons = photos.filter(p => p.rating === Rating.S).map(p => p.reason);
           const bReasons = photos.filter(p => p.rating === Rating.B).map(p => p.reason);
-          const report = await generateGroupReport(stats, sReasons, bReasons, apiKey, baseUrl);
+          const report = await generateGroupReport(stats, sReasons, bReasons, apiKey);
           setGroupReport(report);
       } catch (e) {
           console.error(e);
@@ -228,35 +209,6 @@ const App: React.FC = () => {
                             placeholder="粘贴 AIzaSy... 开头的密钥"
                             className={`w-full bg-slate-950 border-2 rounded-xl px-4 py-3 text-white focus:outline-none transition-all font-mono text-sm ${errorMsg ? 'border-red-500' : 'border-slate-800 focus:border-indigo-500'}`}
                         />
-                    </div>
-
-                    {/* Advanced Settings for Proxy */}
-                    <div className="pt-2">
-                         <button 
-                            onClick={() => setShowAdvanced(!showAdvanced)} 
-                            className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors mb-2"
-                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" className={`h-3 w-3 transition-transform ${showAdvanced ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                            </svg>
-                            高级设置 (自定义代理/Base URL)
-                         </button>
-                         
-                         {showAdvanced && (
-                             <div className="space-y-1 animate-fadeIn bg-slate-800/50 p-3 rounded-lg border border-slate-700">
-                                 <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">API Base URL (选填)</label>
-                                 <input 
-                                     type="text" 
-                                     value={inputBaseUrl}
-                                     onChange={(e) => setInputBaseUrl(e.target.value)}
-                                     placeholder="例如: https://my-proxy.com"
-                                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
-                                 />
-                                 <p className="text-[10px] text-slate-500 leading-tight">
-                                    如果您使用国内中转代理，请在此填入地址。留空则默认为 Google 官方地址 (需要 VPN)。
-                                 </p>
-                             </div>
-                         )}
                     </div>
 
                     {errorMsg && (
@@ -322,12 +274,6 @@ const App: React.FC = () => {
                                     </span>
                                 </li>
                                 <li>
-                                    <strong>或者使用代理地址：</strong>
-                                    <span className="block pl-4 mt-0.5 text-slate-500">
-                                        点击上方的“高级设置”，填入国内可用的 Gemini 代理地址 (Base URL)，这样不需要 VPN 也能用。
-                                    </span>
-                                </li>
-                                <li>
                                     <strong>错误自查：</strong>
                                     <span className="block pl-4 mt-0.5 text-slate-500">
                                         如果照片卡片上显示“网络连不上”，说明“强制进入”没有解决根本网络问题。
@@ -353,11 +299,6 @@ const App: React.FC = () => {
                     <h1 className="text-2xl font-bold text-white">象园长跟拍评级</h1>
                     <div className="flex items-center gap-2 mt-1">
                         <p className="text-slate-400 text-sm">Gemini 3 Flash • 智能视觉分析</p>
-                        {baseUrl && (
-                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                                已启用自定义代理
-                            </span>
-                        )}
                     </div>
                  </div>
             </div>

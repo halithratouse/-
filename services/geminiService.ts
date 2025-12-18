@@ -47,13 +47,9 @@ const resizeAndEncodeImage = async (file: File): Promise<string> => {
 
 // --- VALIDATION ---
 
-export const validateApiKey = async (apiKey: string, baseUrl?: string): Promise<{ valid: boolean; error?: string }> => {
+export const validateApiKey = async (apiKey: string): Promise<{ valid: boolean; error?: string }> => {
     try {
-        const options: any = { apiKey };
-        if (baseUrl && baseUrl.trim().length > 0) {
-            options.baseUrl = baseUrl.trim();
-        }
-        const ai = new GoogleGenAI(options);
+        const ai = new GoogleGenAI({ apiKey });
         
         await ai.models.generateContent({
             model: GEMINI_MODEL,
@@ -63,7 +59,7 @@ export const validateApiKey = async (apiKey: string, baseUrl?: string): Promise<
         return { valid: true };
     } catch (e: any) {
         let msg = e.message || "连接失败";
-        if (e.toString().includes("Failed to fetch")) msg = "网络错误：无法连接到 Google 服务器。请检查 VPN 或配置代理地址。";
+        if (e.toString().includes("Failed to fetch")) msg = "网络错误：无法连接到 Google 服务器。请检查 VPN 是否开启全局模式。";
         if (e.toString().includes("403")) msg = "API Key 无效 (403)";
         return { valid: false, error: msg };
     }
@@ -83,15 +79,10 @@ B (Standard): Stiff, messy background, average document.
 Return strictly JSON: {"rating": "S"|"A"|"B", "reason": "Short critique under 15 words"}
 `;
 
-export const ratePhoto = async (file: File, apiKey: string, baseUrl?: string): Promise<{ rating: Rating; reason: string; error?: boolean }> => {
+export const ratePhoto = async (file: File, apiKey: string): Promise<{ rating: Rating; reason: string; error?: boolean }> => {
     try {
         const base64Image = await resizeAndEncodeImage(file);
-        
-        const options: any = { apiKey };
-        if (baseUrl && baseUrl.trim().length > 0) {
-            options.baseUrl = baseUrl.trim();
-        }
-        const ai = new GoogleGenAI(options);
+        const ai = new GoogleGenAI({ apiKey });
 
         // Retry logic for stability
         let attempts = 0;
@@ -145,7 +136,7 @@ export const ratePhoto = async (file: File, apiKey: string, baseUrl?: string): P
 
 // --- REPORT GENERATION ---
 
-export const generateGroupReport = async (stats: BatchStats, sReasons: string[], bReasons: string[], apiKey: string, baseUrl?: string): Promise<GroupReport> => {
+export const generateGroupReport = async (stats: BatchStats, sReasons: string[], bReasons: string[], apiKey: string): Promise<GroupReport> => {
     const prompt = `
       Evaluate photo batch.
       Stats: Total ${stats.total}, S ${stats.s_count}, A ${stats.a_count}, B ${stats.b_count}.
@@ -161,11 +152,7 @@ export const generateGroupReport = async (stats: BatchStats, sReasons: string[],
       }
     `;
 
-    const options: any = { apiKey };
-    if (baseUrl && baseUrl.trim().length > 0) {
-        options.baseUrl = baseUrl.trim();
-    }
-    const ai = new GoogleGenAI(options);
+    const ai = new GoogleGenAI({ apiKey });
 
     const res = await ai.models.generateContent({
             model: GEMINI_MODEL,
