@@ -19,12 +19,15 @@ const App: React.FC = () => {
   // Auth State
   const [hasApiKey, setHasApiKey] = useState(false);
   const [apiKey, setApiKey] = useState('');
+  const [baseUrl, setBaseUrl] = useState(''); // Custom API Base URL
   
   // Login UI State
   const [inputKey, setInputKey] = useState('');
+  const [inputBaseUrl, setInputBaseUrl] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef<Set<string>>(new Set());
@@ -32,9 +35,14 @@ const App: React.FC = () => {
   // Restore Session
   useEffect(() => {
     const savedKey = localStorage.getItem("API_KEY");
+    const savedBaseUrl = localStorage.getItem("BASE_URL");
     if (savedKey) {
         setApiKey(savedKey);
         setHasApiKey(true);
+    }
+    if (savedBaseUrl) {
+        setBaseUrl(savedBaseUrl);
+        setInputBaseUrl(savedBaseUrl); // Pre-fill login input
     }
   }, []);
 
@@ -67,15 +75,18 @@ const App: React.FC = () => {
                 if (processingRef.current.has(photo.id)) return;
                 processingRef.current.add(photo.id);
 
-                ratePhoto(photo.file, apiKey).then(result => {
+                ratePhoto(photo.file, apiKey, baseUrl).then(result => {
                     setPhotos(prev => prev.map(p => {
                         if (p.id !== photo.id) return p;
+                        if (result.error) {
+                             return { ...p, status: ProcessStatus.Error, reason: result.reason };
+                        }
                         return { ...p, rating: result.rating, reason: result.reason, status: ProcessStatus.Completed };
                     }));
-                }).catch(() => {
+                }).catch((e) => {
                    setPhotos(prev => prev.map(p => {
                         if (p.id !== photo.id) return p;
-                        return { ...p, status: ProcessStatus.Error, reason: "Failed" };
+                        return { ...p, status: ProcessStatus.Error, reason: "系统错误" };
                     }));
                 }).finally(() => {
                     processingRef.current.delete(photo.id);
@@ -86,7 +97,7 @@ const App: React.FC = () => {
 
     const interval = setInterval(processQueue, 1000);
     return () => clearInterval(interval);
-  }, [photos, isProcessing, apiKey]);
+  }, [photos, isProcessing, apiKey, baseUrl]);
 
 
   // Stats
@@ -104,11 +115,12 @@ const App: React.FC = () => {
   const handleLogin = async (skipCheck = false) => {
       // Auto-clean input: remove quotes, spaces, newlines
       const cleanKey = inputKey.replace(/['"\s\n]/g, '').trim();
+      const cleanBaseUrl = inputBaseUrl.trim();
       
       if (!cleanKey) return;
 
       if (!cleanKey.startsWith("AIza")) {
-          setErrorMsg("Key 格式错误：必须以 'AIza' 开头。请检查是否复制完整。");
+          setErrorMsg("Key 格式错误：必须以 'AIza' 开头。");
           return;
       }
 
@@ -116,7 +128,7 @@ const App: React.FC = () => {
       setErrorMsg('');
 
       if (!skipCheck) {
-          const res = await validateApiKey(cleanKey);
+          const res = await validateApiKey(cleanKey, cleanBaseUrl);
           if (!res.valid) {
               setIsVerifying(false);
               setErrorMsg(res.error || "验证失败");
@@ -126,6 +138,15 @@ const App: React.FC = () => {
 
       localStorage.setItem("API_KEY", cleanKey);
       setApiKey(cleanKey);
+      
+      if (cleanBaseUrl) {
+          localStorage.setItem("BASE_URL", cleanBaseUrl);
+          setBaseUrl(cleanBaseUrl);
+      } else {
+          localStorage.removeItem("BASE_URL");
+          setBaseUrl('');
+      }
+
       setHasApiKey(true);
       setIsVerifying(false);
   };
@@ -133,6 +154,7 @@ const App: React.FC = () => {
   const handleLogout = () => {
       if(confirm("确定退出?")) {
           localStorage.removeItem("API_KEY");
+          // Do not clear BASE_URL as user might want to keep proxy settings
           setHasApiKey(false);
           setApiKey('');
           setInputKey('');
@@ -170,17 +192,17 @@ const App: React.FC = () => {
       try {
           const sReasons = photos.filter(p => p.rating === Rating.S).map(p => p.reason);
           const bReasons = photos.filter(p => p.rating === Rating.B).map(p => p.reason);
-          const report = await generateGroupReport(stats, sReasons, bReasons, apiKey);
+          const report = await generateGroupReport(stats, sReasons, bReasons, apiKey, baseUrl);
           setGroupReport(report);
       } catch (e) {
           console.error(e);
-          alert("报告生成失败");
+          alert("报告生成失败：请检查网络连接");
       } finally {
           setGeneratingReport(false);
       }
   };
 
-  // --- LOGIN SCREEN (PURE GEMINI) ---
+  // --- LOGIN SCREEN ---
   if (!hasApiKey) {
       return (
         <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 font-sans text-slate-100">
@@ -206,17 +228,43 @@ const App: React.FC = () => {
                             placeholder="粘贴 AIzaSy... 开头的密钥"
                             className={`w-full bg-slate-950 border-2 rounded-xl px-4 py-3 text-white focus:outline-none transition-all font-mono text-sm ${errorMsg ? 'border-red-500' : 'border-slate-800 focus:border-indigo-500'}`}
                         />
-                        {errorMsg ? (
-                             <div className="text-xs text-red-400 px-1 font-bold mt-1 bg-red-900/20 p-2 rounded">
-                                ❌ {errorMsg}
-                             </div>
-                        ) : (
-                             <div className="flex justify-between px-1 text-xs text-slate-500">
-                                <span>密钥仅保存在本地</span>
-                                <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-indigo-400 hover:underline">没有 Key? 去申请 &rarr;</a>
-                             </div>
-                        )}
                     </div>
+
+                    {/* Advanced Settings for Proxy */}
+                    <div className="pt-2">
+                         <button 
+                            onClick={() => setShowAdvanced(!showAdvanced)} 
+                            className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors mb-2"
+                         >
+                            <svg xmlns="http://www.w3.org/2000/svg" className={`h-3 w-3 transition-transform ${showAdvanced ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                            高级设置 (自定义代理/Base URL)
+                         </button>
+                         
+                         {showAdvanced && (
+                             <div className="space-y-1 animate-fadeIn bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                                 <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">API Base URL (选填)</label>
+                                 <input 
+                                     type="text" 
+                                     value={inputBaseUrl}
+                                     onChange={(e) => setInputBaseUrl(e.target.value)}
+                                     placeholder="例如: https://my-proxy.com"
+                                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                                 />
+                                 <p className="text-[10px] text-slate-500 leading-tight">
+                                    如果您使用国内中转代理，请在此填入地址。留空则默认为 Google 官方地址 (需要 VPN)。
+                                 </p>
+                             </div>
+                         )}
+                    </div>
+
+                    {errorMsg && (
+                         <div className="text-xs text-red-400 px-3 py-2 bg-red-900/20 border border-red-900/50 rounded flex gap-2 items-start">
+                            <span className="text-lg">❌</span>
+                            <span>{errorMsg}</span>
+                         </div>
+                    )}
                 </div>
 
                 <div className="space-y-3">
@@ -249,7 +297,7 @@ const App: React.FC = () => {
                                 ⚠️ 忽略报错，强制进入系统
                             </button>
                             <p className="text-[10px] text-center text-slate-500">
-                                * 如果您确定 Key 是正确的，只是因为网络/VPN原因连接失败，请点击强制进入。
+                                * 强制进入后如果照片一直显示“评级失败/网络错误”，说明您的网络仍无法访问 Google。
                             </p>
                          </div>
                     )}
@@ -260,37 +308,32 @@ const App: React.FC = () => {
                         onClick={() => setShowHelp(!showHelp)}
                         className="w-full text-center text-xs text-slate-500 hover:text-indigo-400 underline transition-colors flex items-center justify-center gap-1"
                     >
-                        {showHelp ? '收起教程' : '❓ 还是进不去？点我看教程'}
+                        {showHelp ? '收起帮助' : '❓ 还是进不去？点我看解决方案'}
                     </button>
 
                     {showHelp && (
                         <div className="mt-4 text-left bg-slate-800/50 p-4 rounded-xl text-sm text-slate-300 space-y-2 border border-slate-700/50 animate-fadeIn">
-                            <h3 className="font-bold text-white text-xs mb-2">💡 常见问题解决</h3>
+                            <h3 className="font-bold text-white text-xs mb-2">💡 无法连接的解决方案</h3>
                             <ul className="list-disc list-inside space-y-2 text-xs text-slate-400">
                                 <li>
-                                    <strong className="text-yellow-500">最常见原因：</strong> 网络问题。
+                                    <strong className="text-yellow-500">必须开 VPN 全局模式：</strong>
                                     <span className="block pl-4 mt-0.5 text-slate-500">
-                                        Google 在国内无法直接访问。请确保开启了 VPN，并且开启了<span className="text-white">“全局模式”</span>(Global Mode)。
+                                        中国大陆无法直连 Google。即使您进入了系统，评级照片时依然需要网络畅通。请确保 VPN 开启了<b>全局 (Global)</b> 模式。
                                     </span>
                                 </li>
                                 <li>
-                                    <strong>Key 复制错了：</strong>
+                                    <strong>或者使用代理地址：</strong>
                                     <span className="block pl-4 mt-0.5 text-slate-500">
-                                        请检查复制时有没有多复制空格。系统会自动清除空格，但建议您重新复制一遍。
+                                        点击上方的“高级设置”，填入国内可用的 Gemini 代理地址 (Base URL)，这样不需要 VPN 也能用。
                                     </span>
                                 </li>
                                 <li>
-                                    <strong>强制进入：</strong>
+                                    <strong>错误自查：</strong>
                                     <span className="block pl-4 mt-0.5 text-slate-500">
-                                        如果您确信 Key 没问题，只是验证超时，请点击红色的“强制进入”按钮。
+                                        如果照片卡片上显示“网络连不上”，说明“强制进入”没有解决根本网络问题。
                                     </span>
                                 </li>
                             </ul>
-                            <div className="mt-2 pt-2 border-t border-slate-700/50">
-                                <a href="https://aistudio.google.com/app/apikey" target="_blank" className="block text-center text-xs text-indigo-400 border border-indigo-500/30 rounded py-2 hover:bg-indigo-500/10">
-                                    重新去 Google 申请一个新 Key
-                                </a>
-                            </div>
                         </div>
                     )}
                 </div>
@@ -308,7 +351,14 @@ const App: React.FC = () => {
                  <img src="/logo.png" className="h-12 w-auto filter invert opacity-80" onError={(e) => e.currentTarget.style.display='none'} />
                  <div>
                     <h1 className="text-2xl font-bold text-white">象园长跟拍评级</h1>
-                    <p className="text-slate-400 text-sm">Gemini 3 Flash • 智能视觉分析</p>
+                    <div className="flex items-center gap-2 mt-1">
+                        <p className="text-slate-400 text-sm">Gemini 3 Flash • 智能视觉分析</p>
+                        {baseUrl && (
+                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                                已启用自定义代理
+                            </span>
+                        )}
+                    </div>
                  </div>
             </div>
             

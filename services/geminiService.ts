@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { Rating, BatchStats, GroupReport } from "../types";
 
 // Using Gemini 3 Flash model for best performance/cost ratio for vision tasks
@@ -47,9 +47,14 @@ const resizeAndEncodeImage = async (file: File): Promise<string> => {
 
 // --- VALIDATION ---
 
-export const validateApiKey = async (apiKey: string): Promise<{ valid: boolean; error?: string }> => {
+export const validateApiKey = async (apiKey: string, baseUrl?: string): Promise<{ valid: boolean; error?: string }> => {
     try {
-        const ai = new GoogleGenAI({ apiKey });
+        const options: any = { apiKey };
+        if (baseUrl && baseUrl.trim().length > 0) {
+            options.baseUrl = baseUrl.trim();
+        }
+        const ai = new GoogleGenAI(options);
+        
         await ai.models.generateContent({
             model: GEMINI_MODEL,
             contents: 'ping',
@@ -58,10 +63,8 @@ export const validateApiKey = async (apiKey: string): Promise<{ valid: boolean; 
         return { valid: true };
     } catch (e: any) {
         let msg = e.message || "连接失败";
-        // Friendly error messages for Chinese users
-        if (e.toString().includes("Failed to fetch")) msg = "网络连接失败 (请检查 VPN 是否开启全局模式)";
-        if (e.toString().includes("403")) msg = "API Key 无效或无权访问 (403 Forbidden)";
-        if (e.toString().includes("400")) msg = "API Key 格式错误 (400 Bad Request)";
+        if (e.toString().includes("Failed to fetch")) msg = "网络错误：无法连接到 Google 服务器。请检查 VPN 或配置代理地址。";
+        if (e.toString().includes("403")) msg = "API Key 无效 (403)";
         return { valid: false, error: msg };
     }
 };
@@ -80,51 +83,69 @@ B (Standard): Stiff, messy background, average document.
 Return strictly JSON: {"rating": "S"|"A"|"B", "reason": "Short critique under 15 words"}
 `;
 
-export const ratePhoto = async (file: File, apiKey: string): Promise<{ rating: Rating; reason: string }> => {
-    const base64Image = await resizeAndEncodeImage(file);
-    const ai = new GoogleGenAI({ apiKey });
-    
-    // Retry logic for stability
-    let attempts = 0;
-    while (attempts < 3) {
-        try {
-            const response = await ai.models.generateContent({
-                model: GEMINI_MODEL,
-                contents: {
-                    parts: [
-                        { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
-                        { text: PROMPT_TEXT }
-                    ]
-                },
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            rating: { type: Type.STRING, enum: ['S', 'A', 'B'] },
-                            reason: { type: Type.STRING }
+export const ratePhoto = async (file: File, apiKey: string, baseUrl?: string): Promise<{ rating: Rating; reason: string; error?: boolean }> => {
+    try {
+        const base64Image = await resizeAndEncodeImage(file);
+        
+        const options: any = { apiKey };
+        if (baseUrl && baseUrl.trim().length > 0) {
+            options.baseUrl = baseUrl.trim();
+        }
+        const ai = new GoogleGenAI(options);
+
+        // Retry logic for stability
+        let attempts = 0;
+        while (attempts < 3) {
+            try {
+                const response = await ai.models.generateContent({
+                    model: GEMINI_MODEL,
+                    contents: {
+                        parts: [
+                            { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
+                            { text: PROMPT_TEXT }
+                        ]
+                    },
+                    config: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: Type.OBJECT,
+                            properties: {
+                                rating: { type: Type.STRING, enum: ['S', 'A', 'B'] },
+                                reason: { type: Type.STRING }
+                            }
                         }
                     }
+                });
+                const json = JSON.parse(response.text || "{}");
+                return { rating: json.rating as Rating || Rating.B, reason: json.reason || "Processed" };
+            } catch (e: any) {
+                console.error("Gemini Error", e);
+                // If it's a network error (fetch failed), fail immediately, don't retry as it likely won't fix itself
+                if (e.toString().includes("Failed to fetch")) {
+                    throw new Error("Network Error");
                 }
-            });
-            const json = JSON.parse(response.text || "{}");
-            return { rating: json.rating as Rating || Rating.B, reason: json.reason || "Processed" };
-        } catch (e: any) {
-            console.error("Gemini Error", e);
-            if (e.toString().includes("429") || e.toString().includes("503")) {
-                await wait(2000 * Math.pow(2, attempts)); // Exponential backoff
-                attempts++;
-                continue;
+                
+                if (e.toString().includes("429") || e.toString().includes("503")) {
+                    await wait(2000 * Math.pow(2, attempts)); // Exponential backoff
+                    attempts++;
+                    continue;
+                }
+                throw e;
             }
-            return { rating: Rating.B, reason: "AI 网络错误" };
         }
+        return { rating: Rating.B, reason: "请求超时", error: true };
+    } catch (error: any) {
+        let reason = "AI 处理失败";
+        if (error.message === "Network Error" || error.toString().includes("Failed to fetch")) {
+            reason = "网络连不上 (需VPN)";
+        }
+        return { rating: Rating.Unrated, reason: reason, error: true };
     }
-    return { rating: Rating.B, reason: "请求超时" };
 };
 
 // --- REPORT GENERATION ---
 
-export const generateGroupReport = async (stats: BatchStats, sReasons: string[], bReasons: string[], apiKey: string): Promise<GroupReport> => {
+export const generateGroupReport = async (stats: BatchStats, sReasons: string[], bReasons: string[], apiKey: string, baseUrl?: string): Promise<GroupReport> => {
     const prompt = `
       Evaluate photo batch.
       Stats: Total ${stats.total}, S ${stats.s_count}, A ${stats.a_count}, B ${stats.b_count}.
@@ -140,7 +161,12 @@ export const generateGroupReport = async (stats: BatchStats, sReasons: string[],
       }
     `;
 
-    const ai = new GoogleGenAI({ apiKey });
+    const options: any = { apiKey };
+    if (baseUrl && baseUrl.trim().length > 0) {
+        options.baseUrl = baseUrl.trim();
+    }
+    const ai = new GoogleGenAI(options);
+
     const res = await ai.models.generateContent({
             model: GEMINI_MODEL,
             contents: prompt,
