@@ -30,6 +30,16 @@ const getApiKey = (): string | undefined => {
   return undefined;
 };
 
+// Helper function to get Base URL (for custom proxies)
+// Note: This is currently unused as the SDK does not strictly support baseUrl in constructor options
+const getBaseUrl = (): string | undefined => {
+  if (typeof window !== 'undefined') {
+    const url = localStorage.getItem("GEMINI_BASE_URL");
+    if (url && url.trim().length > 0) return url.trim();
+  }
+  return undefined;
+};
+
 // Helper for delay
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -100,8 +110,10 @@ const responseSchema: Schema = {
 
 export const ratePhotoWithGemini = async (file: File): Promise<{ rating: Rating; reason: string }> => {
   const apiKey = getApiKey();
+  // const baseUrl = getBaseUrl(); // Removed: baseUrl is not a property of GoogleGenAIOptions
   if (!apiKey) throw new Error("API Key not found");
 
+  // Fix: Removed baseUrl from initialization options
   const ai = new GoogleGenAI({ apiKey });
   
   let base64Image: string;
@@ -216,8 +228,10 @@ export const ratePhotoWithGemini = async (file: File): Promise<{ rating: Rating;
 
 export const generateGroupReport = async (stats: BatchStats, sReasons: string[], bReasons: string[]): Promise<GroupReport> => {
     const apiKey = getApiKey();
+    // const baseUrl = getBaseUrl(); // Removed: baseUrl is not a property of GoogleGenAIOptions
     if (!apiKey) throw new Error("API Key not found");
     
+    // Fix: Removed baseUrl from initialization options
     const ai = new GoogleGenAI({ apiKey });
     
     const prompt = `

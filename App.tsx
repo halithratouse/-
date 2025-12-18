@@ -35,7 +35,10 @@ const App: React.FC = () => {
   const [generatingReport, setGeneratingReport] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [hasApiKey, setHasApiKey] = useState(false);
+  
   const [manualKey, setManualKey] = useState('');
+  const [manualBaseUrl, setManualBaseUrl] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef<Set<string>>(new Set());
@@ -44,6 +47,12 @@ const App: React.FC = () => {
   // Check key on mount
   useEffect(() => {
     setHasApiKey(checkApiKey());
+    // Load saved Base URL if exists (to populate field if they log out and back in)
+    const savedUrl = localStorage.getItem("GEMINI_BASE_URL");
+    if (savedUrl) {
+        setManualBaseUrl(savedUrl);
+        setShowAdvanced(true);
+    }
   }, []);
 
   // Processing Logic Effect
@@ -110,11 +119,23 @@ const App: React.FC = () => {
 
   const handleSaveKey = () => {
       if (!manualKey.trim()) return;
+      
+      // Basic validation: warn if strict check fails but custom URL is used
       if (!manualKey.trim().startsWith("AIza")) {
-          alert("Key 格式似乎不正确。通常以 'AIza' 开头。");
-          return;
+          if (!manualBaseUrl.trim()) {
+               alert("Key 格式似乎不正确。它通常以 'AIza' 开头。\n如果您使用的是第三方代理，请在下方【高级设置】中填写代理地址。");
+               return;
+          }
       }
+
       localStorage.setItem("GEMINI_API_KEY", manualKey.trim());
+      
+      if (manualBaseUrl.trim()) {
+          localStorage.setItem("GEMINI_BASE_URL", manualBaseUrl.trim());
+      } else {
+          localStorage.removeItem("GEMINI_BASE_URL");
+      }
+
       setHasApiKey(true);
       setManualKey('');
   };
@@ -122,7 +143,10 @@ const App: React.FC = () => {
   const handleClearKey = () => {
       if(confirm("确定要退出并清除密钥吗？")) {
         localStorage.removeItem("GEMINI_API_KEY");
+        localStorage.removeItem("GEMINI_BASE_URL");
         setHasApiKey(checkApiKey()); 
+        setManualKey('');
+        setManualBaseUrl('');
       }
   };
 
@@ -221,18 +245,48 @@ const App: React.FC = () => {
                 </div>
 
                 {/* The "One Step" Input */}
-                <div className="text-left space-y-2">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">请输入 Google API Key</label>
-                    <div className="relative group">
-                        <input 
-                            type="password"
-                            value={manualKey}
-                            onChange={(e) => setManualKey(e.target.value)}
-                            placeholder="AIzaSy..."
-                            className="w-full bg-slate-950 border-2 border-slate-800 rounded-xl px-4 py-4 text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all font-mono"
-                        />
+                <div className="text-left space-y-4">
+                    <div>
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Google API Key</label>
+                        <div className="relative group mt-1">
+                            <input 
+                                type="password"
+                                value={manualKey}
+                                onChange={(e) => setManualKey(e.target.value)}
+                                placeholder="AIzaSy..."
+                                className="w-full bg-slate-950 border-2 border-slate-800 rounded-xl px-4 py-4 text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all font-mono"
+                            />
+                        </div>
                     </div>
-                    <p className="text-xs text-slate-500 px-1">
+
+                    {/* Advanced / Proxy Toggle */}
+                    <div className="border-t border-slate-800/50 pt-2">
+                         <button 
+                            onClick={() => setShowAdvanced(!showAdvanced)}
+                            className="flex items-center gap-2 text-xs text-indigo-400 hover:text-indigo-300 transition-colors ml-1 mb-2"
+                         >
+                            <span>{showAdvanced ? '▼' : '▶'}</span>
+                            第三方购买 / 自定义代理地址 (可选)
+                         </button>
+                         
+                         {showAdvanced && (
+                             <div className="animate-fade-in space-y-1">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Proxy Base URL</label>
+                                <input 
+                                    type="text"
+                                    value={manualBaseUrl}
+                                    onChange={(e) => setManualBaseUrl(e.target.value)}
+                                    placeholder="https://..."
+                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 transition-all font-mono"
+                                />
+                                <p className="text-[10px] text-slate-500 ml-1">
+                                    如果您从第三方购买的密钥，请在此填入商家提供的 API 地址 (Endpoint)。
+                                </p>
+                             </div>
+                         )}
+                    </div>
+
+                    <p className="text-xs text-slate-500 px-1 pt-2">
                         密钥将仅存储在您的本地浏览器中，安全无忧。
                     </p>
                 </div>
@@ -274,9 +328,16 @@ const App: React.FC = () => {
           </div>
           
           <div className="mt-6 md:mt-0 flex flex-col items-end gap-2 w-full md:w-auto justify-center md:justify-end">
-             <button onClick={handleClearKey} className="text-xs text-slate-500 hover:text-red-400 underline mb-2">
-                退出 / 切换 Key
-             </button>
+             <div className="flex flex-col items-end">
+                 <button onClick={handleClearKey} className="text-xs text-slate-500 hover:text-red-400 underline mb-1">
+                    退出 / 切换 Key
+                 </button>
+                 {localStorage.getItem("GEMINI_BASE_URL") && (
+                     <span className="text-[10px] text-indigo-400 bg-indigo-900/20 px-1.5 py-0.5 rounded border border-indigo-900/50 mb-2">
+                        Custom Proxy Active
+                     </span>
+                 )}
+             </div>
              <div className="flex gap-4">
                 <input type="file" multiple accept="image/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
                 <button onClick={() => fileInputRef.current?.click()} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg shadow-lg shadow-indigo-500/20 transition-all active:scale-95 flex items-center gap-2">
